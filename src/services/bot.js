@@ -1,5 +1,11 @@
 const TelegramBot = require('node-telegram-bot-api');
-const supabase = require('../db/database');
+const {
+  getFarmerLanguage,
+  registerFarmer,
+  updateFarmerLanguage,
+  saveDiagnosis,
+  updateLatestFeedback
+} = require('../db/database');
 const { diagnoseCrop, downloadPhotoAsBase64 } = require('./ai');
 require('dotenv').config();
 
@@ -36,63 +42,32 @@ Dhukkuba yookiin hamaa yoo jiraate isiniif nan himna.`,
   }
 };
 
-async function getFarmerLanguage(telegramId) {
-  try {
-    const { data, error } = await supabase
-      .from('farmers')
-      .select('language')
-      .eq('telegram_id', telegramId)
-      .limit(1);
-
-    if (error) {
-      console.error('❌ Error getting language:', error.message);
-      return 'amharic';
-    }
-
-    return data?.[0]?.language || 'amharic';
-
-  } catch (err) {
-    console.error('❌ getFarmerLanguage crashed:', err.message);
-    return 'amharic';
-  }
-}
-
 bot.onText(/\/start/, async (msg) => {
   const telegramId = msg.chat.id.toString();
   const firstName = msg.chat.first_name || 'Farmer';
 
   try {
-    const { data: existing } = await supabase
-      .from('farmers')
-      .select('*')
-      .eq('telegram_id', telegramId);
-
-    if (!existing || existing.length === 0) {
-      await supabase
-        .from('farmers')
-        .insert([{ telegram_id: telegramId, name: firstName }]);
-      console.log(`✅ New farmer registered: ${firstName}`);
-    }
-
-    bot.sendMessage(
-      msg.chat.id,
-      `🌱 Welcome to Gebere Vision AI!\n\nPlease choose your language:\nቋንቋዎን ይምረጡ / Afaan filadhaa:`,
-      {
-        reply_markup: {
-          inline_keyboard: [[
-            { text: '🇪🇹 አማርኛ (Amharic)', callback_data: 'lang_amharic' },
-            { text: '🇪🇹 Afaan Oromo', callback_data: 'lang_oromo' }
-          ]]
-        }
-      }
-    );
-
+    await registerFarmer(telegramId, firstName);
   } catch (error) {
-    console.error('❌ Error in /start:', error.message);
+    console.error('❌ Error in /start registerFarmer:', error.message);
   }
+
+  bot.sendMessage(
+    msg.chat.id,
+    `🌱 Welcome to Gebere Vision AI!\n\nPlease choose your language:\nቋንቋዎን ይምረጡ / Afaan filadhaa:`,
+    {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '🇪🇹 አማርኛ (Amharic)', callback_data: 'lang_amharic' },
+          { text: '🇪🇹 Afaan Oromo', callback_data: 'lang_oromo' }
+        ]]
+      }
+    }
+  );
 });
 
 bot.on('callback_query', async (query) => {
+  if (!query.message || !query.message.chat) return;
   const telegramId = query.message.chat.id.toString();
   const choice = query.data;
 
@@ -103,10 +78,11 @@ bot.on('callback_query', async (query) => {
     if (choice === 'lang_amharic' || choice === 'lang_oromo') {
       const language = choice === 'lang_amharic' ? 'amharic' : 'oromo';
 
-      await supabase
-        .from('farmers')
-        .update({ language })
-        .eq('telegram_id', telegramId);
+      try {
+        await updateFarmerLanguage(telegramId, language);
+      } catch (error) {
+        console.error('❌ Error saving language preference:', error.message);
+      }
 
       console.log(`✅ Farmer ${telegramId} chose: ${language}`);
 
@@ -121,14 +97,13 @@ bot.on('callback_query', async (query) => {
     if (choice.startsWith('feedback_')) {
       const isHelpful = choice.includes('helpful') && !choice.includes('nothelpful');
       const language = await getFarmerLanguage(telegramId);
+      const feedback = isHelpful ? 'helpful' : 'not_helpful';
 
-      // Save feedback to database
-      await supabase
-        .from('diagnoses')
-        .update({ feedback: isHelpful ? 'helpful' : 'not_helpful' })
-        .eq('farmer_id', telegramId)
-        .order('created_at', { ascending: false })
-        .limit(1);
+      try {
+        await updateLatestFeedback(telegramId, feedback);
+      } catch (error) {
+        console.error('❌ Error saving feedback:', error.message);
+      }
 
       const thankYou = language === 'oromo'
         ? isHelpful
@@ -182,36 +157,28 @@ bot.on('photo', async (msg) => {
     const diagnosis = await diagnoseCrop(photoBase64, language);
     console.log(`✅ Diagnosis received`);
 
-    const { error: dbError } = await supabase
-      .from('diagnoses')
-      .insert([{
-        farmer_id: telegramId,
-        gemini_result: diagnosis,
-        crop_type: 'unknown'
-      }]);
-
-    if (dbError) {
+    try {
+      await saveDiagnosis(telegramId, diagnosis);
+    } catch (dbError) {
       console.error('❌ DB save error:', dbError.message);
-    } else {
-      console.log('✅ Saved to database');
     }
 
     await bot.sendMessage(msg.chat.id, diagnosis);
     await bot.sendMessage(msg.chat.id, messages[language].follow_up);
 
-// Send feedback buttons after diagnosis
-const feedbackText = language === 'oromo'
-  ? '👍 Qorannoon kun si gargaareeyyu?'
-  : '👍 ይህ ምርመራ ጠቃሚ ነበር?';
+    // Send feedback buttons after diagnosis
+    const feedbackText = language === 'oromo'
+      ? '👍 Qorannoon kun si gargaareeyyu?'
+      : '👍 ይህ ምርመራ ጠቃሚ ነበር?';
 
-await bot.sendMessage(msg.chat.id, feedbackText, {
-  reply_markup: {
-    inline_keyboard: [[
-      { text: '👍 Helpful', callback_data: `feedback_helpful_${msg.chat.id}` },
-      { text: '👎 Not helpful', callback_data: `feedback_nothelpful_${msg.chat.id}` }
-    ]]
-  }
-});
+    await bot.sendMessage(msg.chat.id, feedbackText, {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '👍 Helpful', callback_data: `feedback_helpful_${msg.chat.id}` },
+          { text: '👎 Not helpful', callback_data: `feedback_nothelpful_${msg.chat.id}` }
+        ]]
+      }
+    });
 
   } catch (error) {
     console.error('❌ Photo handler error:', error.message);
