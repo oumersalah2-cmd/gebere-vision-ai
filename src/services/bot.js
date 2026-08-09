@@ -13,6 +13,14 @@ const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, {
   polling: true
 });
 
+bot.on('polling_error', (error) => {
+  console.error('❌ Telegram Polling Error:', error);
+});
+
+bot.on('error', (error) => {
+  console.error('❌ Telegram General Error:', error);
+});
+
 console.log('🤖 Telegram bot is running...');
 
 const messages = {
@@ -39,6 +47,18 @@ Dhukkuba yookiin hamaa yoo jiraate isiniif nan himna.`,
     language_saved: `✅ Afaan Oromoo filatameera.`,
     follow_up: `❓ Gaaffii yoo qabaattan, suuraa biroo naa erguu dandeessu.`,
     error: `❌ Dhiifama, rakkoo uumameera. Maaloo irra deebi'ii yaalii.`
+  },
+  english: {
+    welcome: `🌱 *Welcome to Gebere Vision AI*
+
+I am your digital agronomist assistant.
+Please send me a photo of your crop.
+I will diagnose any diseases or weeds and provide treatment advice.`,
+    photo_received: `📸 Photo received.\n🔍 Analyzing... Please wait a moment.`,
+    send_photo: `📸 Please send a photo of your crop.`,
+    language_saved: `✅ English has been selected.`,
+    follow_up: `❓ If you have another question, send another photo.`,
+    error: `❌ Sorry, something went wrong. Please try again.`
   }
 };
 
@@ -59,7 +79,8 @@ bot.onText(/\/start/, async (msg) => {
       reply_markup: {
         inline_keyboard: [[
           { text: '🇪🇹 አማርኛ (Amharic)', callback_data: 'lang_amharic' },
-          { text: '🇪🇹 Afaan Oromo', callback_data: 'lang_oromo' }
+          { text: '🇪🇹 Afaan Oromo', callback_data: 'lang_oromo' },
+          { text: '🇬🇧 English', callback_data: 'lang_english' }
         ]]
       }
     }
@@ -75,8 +96,10 @@ bot.on('callback_query', async (query) => {
     await bot.answerCallbackQuery(query.id);
 
     // Handle language selection
-    if (choice === 'lang_amharic' || choice === 'lang_oromo') {
-      const language = choice === 'lang_amharic' ? 'amharic' : 'oromo';
+    if (choice === 'lang_amharic' || choice === 'lang_oromo' || choice === 'lang_english') {
+      let language = 'english';
+      if (choice === 'lang_amharic') language = 'amharic';
+      if (choice === 'lang_oromo') language = 'oromo';
 
       try {
         await updateFarmerLanguage(telegramId, language);
@@ -105,13 +128,20 @@ bot.on('callback_query', async (query) => {
         console.error('❌ Error saving feedback:', error.message);
       }
 
-      const thankYou = language === 'oromo'
-        ? isHelpful
+      let thankYou = '';
+      if (language === 'oromo') {
+        thankYou = isHelpful
           ? '🙏 Galatoomaa! Deebiin keessan nuuf baay\'ee barbaachisaadha.'
-          : '🙏 Galatoomaa! Fooyya\'insaaf hojjenna.'
-        : isHelpful
+          : '🙏 Galatoomaa! Fooyya\'insaaf hojjenna.';
+      } else if (language === 'amharic') {
+        thankYou = isHelpful
           ? '🙏 እናመሰግናለን! አስተያየትዎ ለእኛ በጣም አስፈላጊ ነው።'
           : '🙏 እናመሰግናለን! የተሻለ ለማድረግ እንሰራለን።';
+      } else {
+        thankYou = isHelpful
+          ? '🙏 Thank you! Your feedback is very important to us.'
+          : '🙏 Thank you! We will work to make it better.';
+      }
 
       await bot.sendMessage(query.message.chat.id, thankYou);
       console.log(`📊 Feedback from ${telegramId}: ${isHelpful ? 'helpful' : 'not helpful'}`);
@@ -138,7 +168,7 @@ bot.on('message', async (msg) => {
 
 bot.on('photo', async (msg) => {
   const telegramId = msg.chat.id.toString();
-  let language = 'amharic';
+  let language = 'english';
 
   try {
     language = await getFarmerLanguage(telegramId);
@@ -167,9 +197,12 @@ bot.on('photo', async (msg) => {
     await bot.sendMessage(msg.chat.id, messages[language].follow_up);
 
     // Send feedback buttons after diagnosis
-    const feedbackText = language === 'oromo'
-      ? '👍 Qorannoon kun si gargaareeyyu?'
-      : '👍 ይህ ምርመራ ጠቃሚ ነበር?';
+    let feedbackText = '👍 Was this diagnosis helpful?';
+    if (language === 'oromo') {
+      feedbackText = '👍 Qorannoon kun si gargaareeyyu?';
+    } else if (language === 'amharic') {
+      feedbackText = '👍 ይህ ምርመራ ጠቃሚ ነበር?';
+    }
 
     await bot.sendMessage(msg.chat.id, feedbackText, {
       reply_markup: {
@@ -194,7 +227,8 @@ bot.onText(/\/language/, async (msg) => {
       reply_markup: {
         inline_keyboard: [[
           { text: '🇪🇹 አማርኛ (Amharic)', callback_data: 'lang_amharic' },
-          { text: '🇪🇹 Afaan Oromo', callback_data: 'lang_oromo' }
+          { text: '🇪🇹 Afaan Oromo', callback_data: 'lang_oromo' },
+          { text: '🇬🇧 English', callback_data: 'lang_english' }
         ]]
       }
     }
@@ -205,8 +239,9 @@ bot.onText(/\/help/, async (msg) => {
   const telegramId = msg.chat.id.toString();
   const language = await getFarmerLanguage(telegramId);
 
-  const helpText = language === 'oromo'
-    ? `🌱 *Gebere Vision AI - Gargaarsa*
+  let helpText = '';
+  if (language === 'oromo') {
+    helpText = `🌱 *Gebere Vision AI - Gargaarsa*
 
 📸 *Suuraa ergi* - Suuraa midhaan keessanii naa ergi, dhukkuba nan adda baasa
 
@@ -215,8 +250,9 @@ bot.onText(/\/help/, async (msg) => {
 /language - Afaan jijjiri
 /about - Waa'ee bot kanaa baradhu
 
-❓ Gaaffii yoo qabaattan suuraa erguun gaafficha ibsi.`
-    : `🌱 *Gebere Vision AI - እርዳታ*
+❓ Gaaffii yoo qabaattan suuraa erguun gaafficha ibsi.`;
+  } else if (language === 'amharic') {
+    helpText = `🌱 *Gebere Vision AI - እርዳታ*
 
 📸 *ፎቶ ይላኩ* - የሰብልዎን ፎቶ ይላኩልኝ፣ በሽታውን ወዲያው እለያለሁ
 
@@ -226,6 +262,18 @@ bot.onText(/\/help/, async (msg) => {
 /about - ስለ ቦቱ ይወቁ
 
 ❓ ጥያቄ ካለዎት ፎቶ ላኩና ጥያቄዎን ይጻፉ።`;
+  } else {
+    helpText = `🌱 *Gebere Vision AI - Help*
+
+📸 *Send a Photo* - Send a photo of your crop, and I will diagnose any diseases or weeds.
+
+/start - Start the bot
+/help - Get help
+/language - Change language
+/about - Learn about the bot
+
+❓ If you have questions, send a photo and ask your question.`;
+  }
 
   bot.sendMessage(msg.chat.id, helpText, { parse_mode: 'Markdown' });
 });
@@ -234,8 +282,9 @@ bot.onText(/\/about/, async (msg) => {
   const telegramId = msg.chat.id.toString();
   const language = await getFarmerLanguage(telegramId);
 
-  const aboutText = language === 'oromo'
-    ? `🌱 *Waa'ee Gebere Vision AI*
+  let aboutText = '';
+  if (language === 'oromo') {
+    aboutText = `🌱 *Waa'ee Gebere Vision AI*
 
 Gebere Vision AI ogumaa qonnaa dijitaalaa keessan ta'a.
 
@@ -244,8 +293,9 @@ Gebere Vision AI ogumaa qonnaa dijitaalaa keessan ta'a.
 ✅ Afaan Oromoo fi Amaariffaan dubbata
 ✅ Tola — gatii hin baasu
 
-🇪🇹 Qonnaan bultoota Itoophiyaaf kan uumame`
-    : `🌱 *ስለ Gebere Vision AI*
+🇪🇹 Qonnaan bultoota Itoophiyaaf kan uumame`;
+  } else if (language === 'amharic') {
+    aboutText = `🌱 *ስለ Gebere Vision AI*
 
 Gebere Vision AI የእርስዎ ዲጂታል አግሮኖሚስት ነው።
 
@@ -255,6 +305,18 @@ Gebere Vision AI የእርስዎ ዲጂታል አግሮኖሚስት ነው።
 ✅ ሙሉ በሙሉ ነፃ ነው
 
 🇪🇹 ለኢትዮጵያ አርሶ አደሮች የተሰራ`;
+  } else {
+    aboutText = `🌱 *About Gebere Vision AI*
+
+Gebere Vision AI is your digital agronomist.
+
+✅ Diagnoses crop diseases
+✅ Provides actionable treatment advice
+✅ Supports Amharic, Oromo, and English
+✅ 100% Free
+
+🇪🇹 Built for Ethiopian farmers`;
+  }
 
   bot.sendMessage(msg.chat.id, aboutText, { parse_mode: 'Markdown' });
 });
