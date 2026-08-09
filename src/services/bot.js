@@ -308,14 +308,15 @@ Gebere Vision AI የእርስዎ ዲጂታል አግሮኖሚስት ነው።
   } else {
     aboutText = `🌱 *About Gebere Vision AI*
 
-Gebere Vision AI is your digital agronomist.
+Gebere Vision AI is a zero-friction, voice-enabled, and image-based crop disease diagnostics bot designed for smallholder farmers.
 
-✅ Diagnoses crop diseases
-✅ Provides actionable treatment advice
-✅ Supports Amharic, Oromo, and English
-✅ 100% Free
+✅ *Zero-Friction*: Works directly inside Telegram.
+✅ *Double-Shield Guide*: Actionable cultural & chemical remedies.
+✅ *Multilingual*: Supports English, Amharic, and Oromo.
+✅ *CABI-Grounded*: Hallucination-free diagnostics.
+✅ *100% Free*
 
-🇪🇹 Built for Ethiopian farmers`;
+🇪🇹 Built for agricultural hubs starting in Ethiopia.`;
   }
 
   bot.sendMessage(msg.chat.id, aboutText, { parse_mode: 'Markdown' });
