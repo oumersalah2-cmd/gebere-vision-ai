@@ -2,9 +2,18 @@ const Groq = require('groq-sdk');
 const axios = require('axios');
 require('dotenv').config();
 
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY
-});
+let groq = null;
+
+function getGroqClient() {
+  if (!groq) {
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) {
+      throw new Error('GROQ_API_KEY is not defined in environment or .env file');
+    }
+    groq = new Groq({ apiKey });
+  }
+  return groq;
+}
 
 let lastRequestTime = 0;
 const MIN_REQUEST_INTERVAL = 3000;
@@ -17,7 +26,7 @@ async function downloadPhotoAsBase64(fileUrl) {
   return base64;
 }
 
-async function diagnoseCrop(photoBase64, language) {
+async function diagnoseCrop(photoBase64, language = 'english') {
   const now = Date.now();
   const timeSinceLastRequest = now - lastRequestTime;
 
@@ -30,10 +39,12 @@ async function diagnoseCrop(photoBase64, language) {
   lastRequestTime = Date.now();
 
   try {
+    const client = getGroqClient();
+
     // Step 1 - Diagnose in English first for maximum accuracy
     console.log(`🔍 Step 1: Diagnosing crop in English...`);
 
-    const diagnosisResponse = await groq.chat.completions.create({
+    const diagnosisResponse = await client.chat.completions.create({
       model: 'meta-llama/llama-4-scout-17b-16e-instruct',
       messages: [
         {
@@ -84,14 +95,19 @@ If the image is not a crop or is unclear, say so politely.`
     const englishDiagnosis = diagnosisResponse.choices[0].message.content;
     console.log('✅ English diagnosis received');
 
-    // Step 2 - Translate to farmer's chosen language
+    // If English is requested, return directly without translation
+    if (language === 'english') {
+      return englishDiagnosis;
+    }
+
+    // Step 2 - Translate to farmer's chosen language (Amharic or Oromo)
     const targetLanguage = language === 'oromo'
       ? 'Afaan Oromo language using Latin alphabet only. Afaan Oromo does NOT use Ethiopic script.'
       : "Amharic language using Ethiopic Ge'ez script (አማርኛ) only.";
 
     console.log(`🌍 Step 2: Translating to ${language}...`);
 
-    const translationResponse = await groq.chat.completions.create({
+    const translationResponse = await client.chat.completions.create({
       model: 'meta-llama/llama-4-scout-17b-16e-instruct',
       messages: [
         {
@@ -110,7 +126,7 @@ Rules:
 - Keep the exact same format and structure
 - Translate every word of text
 - Do not add any extra text or notes
-- ${language === 'oromo' ? 'Use ONLY Latin alphabet for Afaan Oromo — never use Ethiopic script' : 'Use ONLY Ethiopic Ge\'ez script for Amharic — never use English'}
+- ${language === 'oromo' ? 'Use ONLY Latin alphabet for Afaan Oromo — never use Ethiopic script' : "Use ONLY Ethiopic Ge'ez script for Amharic — never use English"}
 
 Text to translate:
 ${englishDiagnosis}`
@@ -128,6 +144,8 @@ ${englishDiagnosis}`
 
     if (language === 'oromo') {
       return 'Dhiifama, suuraa kee ilaalu hin dandeenye. Maaloo suuraa iftoomina qabu ergii.';
+    } else if (language === 'english') {
+      return 'Sorry, I could not analyze the image. Please make sure the photo is clear and try again.';
     } else {
       return 'ይቅርታ፣ ፎቶዎን ማየት አልቻልኩም። እባክዎ ግልጽ የሆነ ፎቶ ይላኩ።';
     }

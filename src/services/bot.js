@@ -9,19 +9,34 @@ const {
 const { diagnoseCrop, downloadPhotoAsBase64 } = require('./ai');
 require('dotenv').config();
 
-const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, {
-  polling: true
-});
+const token = process.env.TELEGRAM_BOT_TOKEN;
+
+let bot;
+if (!token) {
+  console.error('\n⚠️  [CONFIG WARNING] TELEGRAM_BOT_TOKEN is missing in your environment / .env file!');
+  console.error('👉 The bot cannot connect to Telegram without this token.');
+  console.error('👉 Please create a .env file and set TELEGRAM_BOT_TOKEN=your_token\n');
+  bot = new TelegramBot('missing_token', { polling: false });
+} else {
+  bot = new TelegramBot(token, {
+    polling: true
+  });
+
+  // Ensure any active webhook is cleared so polling receives updates cleanly
+  bot.deleteWebHook()
+    .then(() => console.log('🔄 Telegram webhook cleared, ready for polling.'))
+    .catch((err) => console.warn('⚠️ Webhook clear warning:', err.message));
+
+  console.log('🤖 Telegram bot is running and listening for messages...');
+}
 
 bot.on('polling_error', (error) => {
-  console.error('❌ Telegram Polling Error:', error);
+  console.error('❌ Telegram Polling Error:', error.message || error);
 });
 
 bot.on('error', (error) => {
-  console.error('❌ Telegram General Error:', error);
+  console.error('❌ Telegram General Error:', error.message || error);
 });
-
-console.log('🤖 Telegram bot is running...');
 
 const messages = {
   amharic: {
@@ -62,6 +77,13 @@ I will diagnose any diseases or weeds and provide treatment advice.`,
   }
 };
 
+function getMessages(language) {
+  if (language && messages[language]) {
+    return messages[language];
+  }
+  return messages.amharic;
+}
+
 bot.onText(/\/start/, async (msg) => {
   const telegramId = msg.chat.id.toString();
   const firstName = msg.chat.first_name || 'Farmer';
@@ -84,16 +106,16 @@ bot.onText(/\/start/, async (msg) => {
         ]]
       }
     }
-  );
+  ).catch(err => console.error('❌ Send message error (/start):', err.message));
 });
 
 bot.on('callback_query', async (query) => {
   if (!query.message || !query.message.chat) return;
-  const telegramId = query.message.chat.id.toString();
+  const telegramId = (query.from ? query.from.id : query.message.chat.id).toString();
   const choice = query.data;
 
   try {
-    await bot.answerCallbackQuery(query.id);
+    await bot.answerCallbackQuery(query.id).catch(() => {});
 
     // Handle language selection
     if (choice === 'lang_amharic' || choice === 'lang_oromo' || choice === 'lang_english') {
@@ -109,7 +131,7 @@ bot.on('callback_query', async (query) => {
 
       console.log(`✅ Farmer ${telegramId} chose: ${language}`);
 
-      const lang = messages[language];
+      const lang = getMessages(language);
       await bot.sendMessage(query.message.chat.id, lang.language_saved);
       await bot.sendMessage(query.message.chat.id, lang.welcome, {
         parse_mode: 'Markdown'
@@ -118,7 +140,7 @@ bot.on('callback_query', async (query) => {
 
     // Handle feedback
     if (choice.startsWith('feedback_')) {
-      const isHelpful = choice.includes('helpful') && !choice.includes('nothelpful');
+      const isHelpful = choice.startsWith('feedback_helpful_');
       const language = await getFarmerLanguage(telegramId);
       const feedback = isHelpful ? 'helpful' : 'not_helpful';
 
@@ -151,7 +173,6 @@ bot.on('callback_query', async (query) => {
     console.error('❌ Error in callback_query:', error.message);
   }
 });
-    
 
 bot.on('message', async (msg) => {
   if (msg.text && msg.text.startsWith('/')) return;
@@ -160,7 +181,8 @@ bot.on('message', async (msg) => {
   const telegramId = msg.chat.id.toString();
   try {
     const language = await getFarmerLanguage(telegramId);
-    await bot.sendMessage(msg.chat.id, messages[language].send_photo);
+    const lang = getMessages(language);
+    await bot.sendMessage(msg.chat.id, lang.send_photo);
   } catch (error) {
     console.error('❌ Error in message handler:', error.message);
   }
@@ -168,13 +190,14 @@ bot.on('message', async (msg) => {
 
 bot.on('photo', async (msg) => {
   const telegramId = msg.chat.id.toString();
-  let language = 'english';
+  let language = 'amharic';
 
   try {
     language = await getFarmerLanguage(telegramId);
+    const lang = getMessages(language);
     console.log(`📸 Photo from ${telegramId} [${language}]`);
 
-    await bot.sendMessage(msg.chat.id, messages[language].photo_received);
+    await bot.sendMessage(msg.chat.id, lang.photo_received);
 
     const bestPhoto = msg.photo[msg.photo.length - 1];
     const file = await bot.getFile(bestPhoto.file_id);
@@ -183,7 +206,7 @@ bot.on('photo', async (msg) => {
     const photoBase64 = await downloadPhotoAsBase64(fileUrl);
     console.log(`✅ Photo downloaded: ${photoBase64.length} chars`);
 
-    console.log(`🤖 Sending to Gemini [${language}]...`);
+    console.log(`🤖 Diagnosing crop with AI [${language}]...`);
     const diagnosis = await diagnoseCrop(photoBase64, language);
     console.log(`✅ Diagnosis received`);
 
@@ -194,7 +217,7 @@ bot.on('photo', async (msg) => {
     }
 
     await bot.sendMessage(msg.chat.id, diagnosis);
-    await bot.sendMessage(msg.chat.id, messages[language].follow_up);
+    await bot.sendMessage(msg.chat.id, lang.follow_up);
 
     // Send feedback buttons after diagnosis
     let feedbackText = '👍 Was this diagnosis helpful?';
@@ -215,7 +238,8 @@ bot.on('photo', async (msg) => {
 
   } catch (error) {
     console.error('❌ Photo handler error:', error.message);
-    await bot.sendMessage(msg.chat.id, messages[language].error);
+    const lang = getMessages(language);
+    await bot.sendMessage(msg.chat.id, lang.error).catch(e => console.error('Failed to send error message:', e.message));
   }
 });
 
@@ -232,7 +256,7 @@ bot.onText(/\/language/, async (msg) => {
         ]]
       }
     }
-  );
+  ).catch(err => console.error('❌ Send message error (/language):', err.message));
 });
 
 bot.onText(/\/help/, async (msg) => {
@@ -275,7 +299,8 @@ bot.onText(/\/help/, async (msg) => {
 ❓ If you have questions, send a photo and ask your question.`;
   }
 
-  bot.sendMessage(msg.chat.id, helpText, { parse_mode: 'Markdown' });
+  bot.sendMessage(msg.chat.id, helpText, { parse_mode: 'Markdown' })
+    .catch(err => console.error('❌ Send message error (/help):', err.message));
 });
 
 bot.onText(/\/about/, async (msg) => {
@@ -319,7 +344,8 @@ Gebere Vision AI is a zero-friction, voice-enabled, and image-based crop disease
 🇪🇹 Built for agricultural hubs starting in Ethiopia.`;
   }
 
-  bot.sendMessage(msg.chat.id, aboutText, { parse_mode: 'Markdown' });
+  bot.sendMessage(msg.chat.id, aboutText, { parse_mode: 'Markdown' })
+    .catch(err => console.error('❌ Send message error (/about):', err.message));
 });
 
 module.exports = bot;
